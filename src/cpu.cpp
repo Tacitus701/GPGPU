@@ -111,7 +111,6 @@ void read_png(const char *filename)
 
 std::uint8_t *img_to_grayscale(png_bytep *img) {
     std::uint8_t *gray_img = (std::uint8_t *)malloc(width * height * sizeof(std::uint8_t));
-    printf("row : %d and col : %d\n", height, width);
     for (int i = 0; i < height; i++) {
         png_bytep row = row_pointers[i];
         std::uint8_t *my_row = gray_img + i * width;
@@ -336,8 +335,26 @@ void activation_map(std::uint8_t *response, std::uint8_t threshold) {
     }
 }
 
-int main() {
-    const char *filename = "../collective_database/PXL_2.png";
+void connect_component(std::uint8_t *response) {
+    int patch_height = height / patch_size;
+    int patch_width = width / patch_size;
+
+    for (int i = 1; i < patch_height - 1; i++) {
+        for (int j = 1; j < patch_width - 1; j++) {
+            std::uint8_t count = 0;
+            for (int ii = i - 1; ii <= i + 1; ii++) {
+                for (int jj = j - 1; jj <= j + 1; jj++) {
+                    count += *(response + ii * patch_width + jj) > 0;
+                }
+            }
+            if (count >= 4)
+                *(response + i * patch_width + j) = 255;
+        }
+    }
+}
+
+int main(int argc, char **argv) {
+    const char *filename = argv[1];
     read_png(filename);
 
     int patch_height = height / patch_size;
@@ -361,9 +378,10 @@ int main() {
 
     std::uint8_t threshold = max(response, patch_height * patch_width) / 2;
     activation_map(response, threshold);
-    write_png(patch_to_img(response), "activation_map.png");
+    write_png(patch_to_img(response), "barcode.png");
+    connect_component(response);
+    write_png(patch_to_img(response), "cc.png");
 
     free(gray_img);
     return 0;
 }
-//printf("%4d, %4d = RGBA(%3d, %3d, %3d, %3d)\n", 0, 0, px[0], px[1], px[2], px[3]);
