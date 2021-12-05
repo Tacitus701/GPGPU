@@ -342,12 +342,12 @@ void connect_component(std::uint8_t *response) {
     for (int i = 1; i < patch_height - 1; i++) {
         for (int j = 1; j < patch_width - 1; j++) {
             std::uint8_t count = 0;
-            for (int ii = i - 1; ii <= i + 1; ii++) {
-                for (int jj = j - 1; jj <= j + 1; jj++) {
-                    count += *(response + ii * patch_width + jj) > 0;
-                }
-            }
-            if (count >= 4)
+            count += *(response + (i - 1) * patch_width + j) > 0;
+            count += *(response + i * patch_width + j - 1) > 0;
+            count += *(response + i * patch_width + j + 1) > 0;
+            count += *(response + (i + 1) * patch_width + j) > 0;
+
+            if (count >= 2)
                 *(response + i * patch_width + j) = 255;
         }
     }
