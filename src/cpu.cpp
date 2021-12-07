@@ -242,7 +242,7 @@ std::uint8_t max(std::uint8_t *array, int length) {
     return max;
 }
 
-std::uint8_t *patch_to_img(std::uint8_t *patches) {
+void patch_to_img(std::uint8_t *patches, const char *filename) {
     std::uint8_t *img = (std::uint8_t *) malloc(height * width);
     int patch_height = height / patch_size;
     int patch_width = width / patch_size;
@@ -256,7 +256,8 @@ std::uint8_t *patch_to_img(std::uint8_t *patches) {
         }
     }
 
-    return img;
+    write_png(img, filename);
+    free(img);
 }
 
 void compute_kernel(std::uint8_t *response, std::uint8_t *kernel, int i, int j) {
@@ -370,18 +371,21 @@ int main(int argc, char **argv) {
     write_png(sobel_y, "sobel_y.png");
 
     std::uint8_t *response = compute_response(sobel_x, sobel_y);
-    write_png(patch_to_img(response), "response.png");
+    patch_to_img(response, "response.png");
     response = dilation(response);
-    write_png(patch_to_img(response), "dilation.png");
+    patch_to_img(response, "dilation.png");
     response = erosion(response);
-    write_png(patch_to_img(response), "erosion.png");
+    patch_to_img(response, "erosion.png");
 
     std::uint8_t threshold = max(response, patch_height * patch_width) / 2;
     activation_map(response, threshold);
-    write_png(patch_to_img(response), "barcode.png");
+    patch_to_img(response, "barcode.png");
     connect_component(response);
-    write_png(patch_to_img(response), "cc.png");
+    patch_to_img(response, "cc.png");
 
     free(gray_img);
+    free(sobel_x);
+    free(sobel_y);
+    free(response);
     return 0;
 }
