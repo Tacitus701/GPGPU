@@ -125,9 +125,16 @@ std::uint8_t *img_to_grayscale(png_bytep *img, int width, int height) {
     return gray_img;
 }
 
-__global__ void to_grayscale(png_bytep* buffer, int width, int height, size_t pitch)
+__global__ void to_grayscale(png_bytep* buffer_in, uint8_t* buffer_out, int width, int height, size_t pitch)
 {
-  return;
+    int x = blockDim.x * blockIdx.x + threadIdx.x;
+    int y = blockDim.y * blockIdx.y + threadIdx.y;
+
+    if (x >= width || y >= height)
+        return;
+
+    png_bytep px = &(buffer_in[x][y * 4]);
+    buffer_out[y * pitch + x] = 0.2126 * px[0] + 0.7152 * px[1] + 0.0722 * px[2];
 }
 
 int main(int argc, char **argv) {
@@ -142,15 +149,28 @@ int main(int argc, char **argv) {
     int patch_height = height / patch_size;
     int patch_width = width / patch_size;
 
-    std::uint8_t* gray_img = img_to_grayscale(row_pointers, width, height);
-    write_png(gray_img, "res/gray.png", width, height);
-
+    uint8_t* host_gray_img = (uint8_t*) malloc(width * height * sizeof(std::uint8_t));
+    uint8_t* dev_gray_img;
+    size_t pitch;
+    cudaError_t rc = cudaMallocPitch(&dev_gray_img, &pitch, width * sizeof(uint8_t), height);
+    if (rc)
+        std::cerr << cudaGetErrorString(rc);
+    //uint8_t* gray_img = img_to_grayscale(row_pointers, width, height);
     int bsize = 32;
     dim3 dimBlock(bsize, bsize);
-    dim3 dimGrid(width, height);
-    to_grayscale<<<dimGrid, dimBlock>>>(row_pointers, width, height, 0);
+    dim3 dimGrid(width / bsize, height / bsize);
+    to_grayscale<<<dimGrid, dimBlock>>>(row_pointers, dev_gray_img, width, height, pitch);
 
-    free(gray_img);
+    if (cudaPeekAtLastError())
+        std::cerr << "Computation Error";
+
+    rc = cudaMemcpy2D(host_gray_img, width, dev_gray_img, pitch, width * sizeof(uint8_t), height, cudaMemcpyDeviceToHost);
+
+    write_png(host_gray_img, "res/gray.png", width, height);
+
+    
+    cudaFree(dev_gray_img);
+    free(host_gray_img);
     for (int y = 0; y < height; y++) {
         free(row_pointers[y]);
     }
