@@ -125,6 +125,11 @@ std::uint8_t *img_to_grayscale(png_bytep *img, int width, int height) {
     return gray_img;
 }
 
+__global__ void to_grayscale(png_bytep* buffer, int width, int height, size_t pitch)
+{
+  return;
+}
+
 int main(int argc, char **argv) {
 
     int width, height;
@@ -139,6 +144,11 @@ int main(int argc, char **argv) {
 
     std::uint8_t* gray_img = img_to_grayscale(row_pointers, width, height);
     write_png(gray_img, "res/gray.png", width, height);
+
+    int bsize = 32;
+    dim3 dimBlock(bsize, bsize);
+    dim3 dimGrid(width, height);
+    to_grayscale<<<dimGrid, dimBlock>>>(row_pointers, width, height, 0);
 
     free(gray_img);
     for (int y = 0; y < height; y++) {
