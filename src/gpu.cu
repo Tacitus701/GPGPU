@@ -247,6 +247,26 @@ __global__ void compute_erosion(uint8_t* buffer_in, uint8_t* buffer_out,
     buffer_out[y * pitch_out + x] = min;
 }
 
+uint8_t max(std::uint8_t *array, int length) {
+    uint8_t max = 0;
+    for (int i = 0; i < length; i++) {
+        if (array[i] > max)
+            max = array[i];
+    }
+    return max;
+}
+
+__global__ void binarize(uint8_t* image, int width, int height, uint8_t threshold, size_t pitch) {
+    
+    int x = blockDim.x * blockIdx.x + threadIdx.x;
+    int y = blockDim.y * blockIdx.y + threadIdx.y;
+
+    if (x >= width || y >= height)
+        return;
+
+    image[y * pitch + x] = image[y * pitch + x] >= threshold ? 255 : 0;
+}
+
 __global__ void connect_components(uint8_t* buffer_in, uint8_t* buffer_out,
                                 int width, int height,
                                 size_t pitch_in, size_t pitch_out)
@@ -281,28 +301,6 @@ __global__ void upscale(uint8_t* patches, uint8_t* output, int width, int height
     int patch_y = min(y / patch_size, width / patch_size); 
 
     output[y * pitch_out + x] = patches[patch_y * pitch_in + patch_x];
-}
-
-__global__ void binarize(uint8_t* image, int width, int height, uint8_t threshold, size_t pitch) {
-    
-    int x = blockDim.x * blockIdx.x + threadIdx.x;
-    int y = blockDim.y * blockIdx.y + threadIdx.y;
-
-    if (x >= width || y >= height)
-        return;
-
-    image[y * pitch + x] = image[y * pitch + x] >= threshold ? 255 : 0;
-}
-
-uint8_t max(std::uint8_t *array, int length) {
-    uint8_t max = 0;
-
-    for (int i = 0; i < length; i++) {
-        if (array[i] > max)
-            max = array[i];
-    }
-
-    return max;
 }
 
 int main(int argc, char **argv) {
@@ -405,61 +403,4 @@ int main(int argc, char **argv) {
     
     // Free Memory
     free(result_image);
-    
 }
-/*
-
-void connect_component(std::uint8_t *response) {
-    int patch_height = height / patch_size;
-    int patch_width = width / patch_size;
-
-    for (int i = 1; i < patch_height - 1; i++) {
-        for (int j = 1; j < patch_width - 1; j++) {
-            std::uint8_t count = 0;
-            count += *(response + (i - 1) * patch_width + j) > 0;
-            count += *(response + i * patch_width + j - 1) > 0;
-            count += *(response + i * patch_width + j + 1) > 0;
-            count += *(response + (i + 1) * patch_width + j) > 0;
-
-            if (count >= 2)
-                *(response + i * patch_width + j) = 255;
-        }
-    }
-}
-
-int main(int argc, char **argv) {
-    const char *filename = argv[1];
-    read_png(filename);
-
-    int patch_height = height / patch_size;
-    int patch_width = width / patch_size;
-
-    std::uint8_t *gray_img = img_to_grayscale(row_pointers);
-    write_png(gray_img, "gray.png");
-
-    std::uint8_t *sobel_x = (std::uint8_t *)malloc(height * width);
-    std::uint8_t *sobel_y = (std::uint8_t *)malloc(height * width);
-    sobel_filter(gray_img, sobel_x, sobel_y);
-    write_png(sobel_x, "sobel_x.png");
-    write_png(sobel_y, "sobel_y.png");
-
-    std::uint8_t *response = compute_response(sobel_x, sobel_y);
-    patch_to_img(response, "response.png");
-    response = dilation(response);
-    patch_to_img(response, "dilation.png");
-    response = erosion(response);
-    patch_to_img(response, "erosion.png");
-
-    std::uint8_t threshold = max(response, patch_height * patch_width) / 2;
-    activation_map(response, threshold);
-    patch_to_img(response, "barcode.png");
-    connect_component(response);
-    patch_to_img(response, "cc.png");
-
-    free(gray_img);
-    free(sobel_x);
-    free(sobel_y);
-    free(response);
-    return 0;
-}
-*/
