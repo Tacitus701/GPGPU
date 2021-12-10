@@ -260,27 +260,27 @@ void patch_to_img(std::uint8_t *patches, const char *filename) {
     free(img);
 }
 
-void compute_kernel(std::uint8_t *response, std::uint8_t *kernel, int i, int j) {
+void compute_kernel(std::uint8_t *response, std::uint8_t *kernel, int i, int j, uint8_t default_value) {
     int patch_height = height / patch_size;
     int patch_width = width / patch_size;
 
-    kernel[0] = i > 0 && j > 1 ? *(response + (i - 1)  * patch_width + (j - 2)) : 0;
-    kernel[1] = i > 0 && j > 0 ? *(response + (i - 1) * patch_width + (j - 1)) : 0;
-    kernel[2] = i > 0 ? *(response + (i - 1) * patch_width + j) : 0;
-    kernel[3] = i > 0 && j < (patch_width - 1) ? *(response + (i - 1) * patch_width + (j + 1)) : 0;
-    kernel[4] = i > 0 && j < (patch_width - 2) ? *(response + (i - 1) * patch_width + (j + 2)) : 0;
+    kernel[0] = i > 0 && j > 1 ? *(response + (i - 1)  * patch_width + (j - 2)) : default_value;
+    kernel[1] = i > 0 && j > 0 ? *(response + (i - 1) * patch_width + (j - 1)) : default_value;
+    kernel[2] = i > 0 ? *(response + (i - 1) * patch_width + j) : default_value;
+    kernel[3] = i > 0 && j < (patch_width - 1) ? *(response + (i - 1) * patch_width + (j + 1)) : default_value;
+    kernel[4] = i > 0 && j < (patch_width - 2) ? *(response + (i - 1) * patch_width + (j + 2)) : default_value;
 
-    kernel[5] = j > 1 ? *(response + i * patch_width + (j - 2)) : 0;
-    kernel[6] = j > 0 ? *(response + i * patch_width + (j - 1)) : 0;
+    kernel[5] = j > 1 ? *(response + i * patch_width + (j - 2)) : default_value;
+    kernel[6] = j > 0 ? *(response + i * patch_width + (j - 1)) : default_value;
     kernel[7] = *(response + i * patch_width + j);
-    kernel[8] = j < (patch_width - 1) ? *(response + i * patch_width + (j + 1)) : 0;
-    kernel[9] = j < (patch_width - 2) ? *(response + i * patch_width + (j + 2)) : 0;
+    kernel[8] = j < (patch_width - 1) ? *(response + i * patch_width + (j + 1)) : default_value;
+    kernel[9] = j < (patch_width - 2) ? *(response + i * patch_width + (j + 2)) : default_value;
 
-    kernel[10] = i < (patch_height - 1) && j > 1 ? *(response + (i + 1) * patch_width + (j - 2)) : 0;
-    kernel[11] = i < (patch_height - 1) && j > 0 ? *(response + (i + 1) * patch_width + (j - 1)) : 0;
-    kernel[12] = i < (patch_height - 1) ? *(response + (i + 1) * patch_width + j) : 0;
-    kernel[13] = i < (patch_height - 1) && j < (patch_width - 1) ? *(response + (i + 1) * patch_width + (j + 1)) : 0;
-    kernel[14] = i < (patch_height - 1) && j < (patch_width - 2) ? *(response + (i + 1) * patch_width + (j + 2)) : 0;
+    kernel[10] = i < (patch_height - 1) && j > 1 ? *(response + (i + 1) * patch_width + (j - 2)) : default_value;
+    kernel[11] = i < (patch_height - 1) && j > 0 ? *(response + (i + 1) * patch_width + (j - 1)) : default_value;
+    kernel[12] = i < (patch_height - 1) ? *(response + (i + 1) * patch_width + j) : default_value;
+    kernel[13] = i < (patch_height - 1) && j < (patch_width - 1) ? *(response + (i + 1) * patch_width + (j + 1)) : default_value;
+    kernel[14] = i < (patch_height - 1) && j < (patch_width - 2) ? *(response + (i + 1) * patch_width + (j + 2)) : default_value;
 }
 
 std::uint8_t *dilation(std::uint8_t *response) {
@@ -292,7 +292,7 @@ std::uint8_t *dilation(std::uint8_t *response) {
 
     for (int i = 0; i < patch_height; i++) {
         for (int j = 0; j < patch_width; j++) {
-            compute_kernel(response, kernel, i, j);
+            compute_kernel(response, kernel, i, j, 0);
 
             std::uint8_t m = max(kernel, 15);
             *(img + i * patch_width + j) = m;
@@ -313,7 +313,7 @@ std::uint8_t *erosion(std::uint8_t *response) {
 
     for (int i = 0; i < patch_height; i++) {
         for (int j = 0; j < patch_width; j++) {
-            compute_kernel(response, kernel, i, j);
+            compute_kernel(response, kernel, i, j, 255);
 
             std::uint8_t m = min(kernel, 15);
             *(img + i * patch_width + j) = m;
