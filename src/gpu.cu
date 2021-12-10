@@ -371,6 +371,10 @@ int main(int argc, char **argv) {
                                                 width, height, patch_size,
                                                 sobelx_pitch, sobely_pitch, buffer1_pitch);
 
+    // Free Sobel Images
+    cudaFree(sobel_x);
+    cudaFree(sobel_y);
+
     // Dilation + Erosion
     uint8_t* buffer2;
     size_t buffer2_pitch;
@@ -402,5 +406,8 @@ int main(int argc, char **argv) {
     write_png(result_image, "res/result.png", width, height);
     
     // Free Memory
+    cudaFree(result_dev);
+    cudaFree(buffer1);
+    cudaFree(buffer2);
     free(result_image);
 }
