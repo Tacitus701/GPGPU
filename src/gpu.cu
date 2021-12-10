@@ -1,6 +1,7 @@
 #include <cstddef>
 #include <string>
 #include <iostream>
+#include <algorithm>
 
 #include <png.h>
 
@@ -172,6 +173,50 @@ __global__ void compute_sobel(uint8_t* buffer_in, uint8_t* sobel_x, uint8_t* sob
     sobel_y[y * pitch_y + x] = result_y;
 }
 
+__global__ void compute_response(uint8_t* sobel_x, uint8_t* sobel_y, uint8_t* response,
+                                int width, int height, int patch_size,
+                                size_t pitch_x, size_t pitch_y, size_t pitch_out)
+{
+    int x = blockDim.x * blockIdx.x + threadIdx.x;
+    int y = blockDim.y * blockIdx.y + threadIdx.y;
+
+    if (x >= width / patch_size || y >= height / patch_size)
+        return;
+
+    int gradient_x = 0;
+    int gradient_y = 0;
+
+    for (int i = 0; i < patch_size; i++) {
+        int pos_y = y * patch_size + i;
+        for (int j = 0; j < patch_size; j++) {
+            int pos_x = x * patch_size + j;
+            gradient_x += sobel_x[pos_y * pitch_x + pos_x];
+            gradient_y += sobel_y[pos_y * pitch_y + pos_x];
+        }
+    }
+
+    gradient_x /= patch_size * patch_size;
+    gradient_y /= patch_size * patch_size;
+
+    int delta = gradient_x - gradient_y < 0 ? 0 : gradient_x - gradient_y;
+
+    response[y * pitch_out + x] = delta;
+}
+
+__global__ void upscale(uint8_t* patches, uint8_t* output, int width, int height, int patch_size, size_t pitch_in, size_t pitch_out) {
+    
+    int x = blockDim.x * blockIdx.x + threadIdx.x;
+    int y = blockDim.y * blockIdx.y + threadIdx.y;
+
+    if (x >= width || y >= height)
+        return;
+
+    int patch_x = min(x / patch_size, width / patch_size);
+    int patch_y = min(y / patch_size, width / patch_size); 
+
+    output[y * pitch_out + x] = patches[patch_y * pitch_in + patch_x];
+}
+
 int main(int argc, char **argv) {
 
     // Read Image
@@ -181,7 +226,7 @@ int main(int argc, char **argv) {
 
     const char *filename = argv[1];
     read_png(filename, &width, &height, &row_pointers);
-
+    
     int patch_height = height / patch_size;
     int patch_width = width / patch_size;
     
@@ -228,116 +273,37 @@ int main(int argc, char **argv) {
     if (cudaPeekAtLastError())
         std::cerr << "Computation Error";
 
+    // Free grayscale
+    free(host_gray_img);
+    cudaFree(dev_gray_img);
+
+    // Patch calculation
+    uint8_t* response;
+    size_t response_pitch;
+    rc = cudaMallocPitch(&response, &response_pitch, patch_width * sizeof(uint8_t), patch_height);
+    compute_response<<<dimGrid, dimBlock>>>(sobel_x, sobel_y, response,
+                                                width, height, patch_size,
+                                                sobelx_pitch, sobely_pitch, response_pitch);
+
+    // Upscale Image to native res
+    uint8_t* result_dev;
+    size_t result_pitch;
+    rc = cudaMallocPitch(&result_dev, &result_pitch, width * sizeof(uint8_t), height);
+    upscale<<<dimGrid, dimBlock>>>(response, result_dev, width, height, patch_size, response_pitch, result_pitch);
+
     // Output Result
     uint8_t* result_image = (uint8_t*) malloc(width * height * sizeof(uint8_t));
-    rc = cudaMemcpy2D(result_image, width * sizeof(uint8_t), sobel_x, pitch, width * sizeof(uint8_t), height, cudaMemcpyDeviceToHost);
+    rc = cudaMemcpy2D(result_image, width * sizeof(uint8_t), result_dev, result_pitch, width * sizeof(uint8_t), height, cudaMemcpyDeviceToHost);
     if (rc)
         std::cerr << cudaGetErrorString(rc) << std::endl;
     write_png(result_image, "res/result.png", width, height);
     
-    // Free memory
-    cudaFree(dev_gray_img);
-    free(host_gray_img);
+    // Free Memory
+    free(result_image);
     
 }
 /*
-void compute_sobel(std::uint8_t current[9], std::uint8_t *result_x, std::uint8_t *result_y) {
-    int kernel_x[9] = {-1, 0, 1, -2, 0, 2, -1, 0, 1};
-    int kernel_y[9] = {-1, -2, -1, 0, 0, 0, 1, 2, 1};
 
-    int x = 0;
-    int y = 0;
-
-    for (int i = 0; i < 9; i++) {
-        x += current[i] * kernel_x[i];
-        y += current[i] * kernel_y[i];
-    }
-
-    x = x > 255 ? 255 : x;
-    x = x < 0 ? 0 : x;
-
-    y = y > 255 ? 255 : y;
-    y = y < 0 ? 0 : y;
-
-    *result_x = x;
-    *result_y = y;
-}
-
-void sobel_filter(std::uint8_t *img, std::uint8_t *sobel_x, std::uint8_t *sobel_y) {
-    for (int i = 0; i < height; i++) {
-        for (int j = 0; j < width; j++) {
-            std::uint8_t current[9];
-
-            current[0] = i > 0 && j > 0 ? *(img + (i - 1) * width + j - 1) : 0;
-            current[1] = i > 0 ? *(img + (i - 1) * width + j) : 0;
-            current[2] = i > 0 && j < (width -1) ? *(img + (i - 1) * width + j + 1) : 0;
-
-            current[3] = j > 0 ? *(img + i * width + j - 1) : 0;
-            current[4] = *(img + i * width + j);
-            current[5] = j < (width -1) ? *(img + i * width + j + 1) : 0;
-
-            current[6] = i < (height - 1) && j > 0 ? *(img + (i + 1) * width + j - 1) : 0;
-            current[7] = i < (height - 1) ? *(img + (i + 1) * width + j) : 0;
-            current[8] = i < (height - 1) && j < (width -1) ? *(img + (i + 1) * width + j + 1) : 0;
-
-            std::uint8_t result_x = 0;
-            std::uint8_t result_y = 0;
-
-            compute_sobel(current, &result_x, &result_y);
-
-            *(sobel_x + i * width + j) = result_x;
-            *(sobel_y + i * width + j) = result_y;
-        }
-    }
-}
-
-void compute_patch(std::uint8_t *sobel_x, std::uint8_t *sobel_y, int x, int y,
-                   std::uint8_t *response) {
-    int nb_pixel = patch_size * patch_size;
-
-    std::uint8_t *patch_sobel_x = sobel_x + (x * patch_size * width) + y * patch_size;
-    std::uint8_t *patch_sobel_y = sobel_y + (x * patch_size * width) + y * patch_size;
-
-    int gradient_x = 0;
-    int gradient_y = 0;
-
-    for (int i = 0; i < patch_size; i++) {
-        for (int j = 0; j < patch_size; j++) {
-            gradient_x += *(patch_sobel_x + (i * width) + j);
-            gradient_y += *(patch_sobel_y + (i * width) + j);
-        }
-    }
-
-    gradient_x /= nb_pixel;
-    gradient_y /= nb_pixel;
-
-    int patch_width = width / patch_size;
-    int delta = gradient_x - gradient_y < 0 ? 0 : gradient_x - gradient_y;
-    *(response + x * patch_width + y) = delta;
-
-    for (int i = 0; i < patch_size; i++) {
-        for (int j = 0; j < patch_size; j++) {
-            std::uint8_t *elt_x = patch_sobel_x + (i * width) + j;
-            std::uint8_t *elt_y = patch_sobel_y + (i * width) + j;
-            *elt_x = *elt_x + gradient_x > 255 ? 255 : *elt_x + gradient_x;
-            *elt_y = *elt_y + gradient_y > 255 ? 255 : *elt_y + gradient_y;
-        }
-    }
-}
-
-std::uint8_t *compute_response(std::uint8_t *sobel_x, std::uint8_t *sobel_y) {
-    int patch_height = height / patch_size;
-    int patch_width = width / patch_size;
-    std::uint8_t *response = (std::uint8_t *) malloc(patch_height * patch_width);
-
-    for (int i = 0; i < patch_height; i++) {
-        for (int j = 0; j < patch_width; j++) {
-            compute_patch(sobel_x, sobel_y, i, j, response);
-        }
-    }
-
-    return response;
-}
 
 std::uint8_t min(std::uint8_t *array, int length) {
     std::uint8_t min = 255;
