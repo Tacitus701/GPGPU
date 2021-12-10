@@ -261,6 +261,28 @@ __global__ void upscale(uint8_t* patches, uint8_t* output, int width, int height
     output[y * pitch_out + x] = patches[patch_y * pitch_in + patch_x];
 }
 
+__global__ void binarize(uint8_t* image, int width, int height, uint8_t threshold, size_t pitch) {
+    
+    int x = blockDim.x * blockIdx.x + threadIdx.x;
+    int y = blockDim.y * blockIdx.y + threadIdx.y;
+
+    if (x >= width || y >= height)
+        return;
+
+    image[y * pitch + x] = image[y * pitch + x] >= threshold ? 255 : 0;
+}
+
+uint8_t max(std::uint8_t *array, int length) {
+    uint8_t max = 0;
+
+    for (int i = 0; i < length; i++) {
+        if (array[i] > max)
+            max = array[i];
+    }
+
+    return max;
+}
+
 int main(int argc, char **argv) {
 
     // Read Image
@@ -281,7 +303,7 @@ int main(int argc, char **argv) {
     cudaError_t rc = cudaMallocPitch(&dev_gray_img, &pitch, width * sizeof(uint8_t), height);
     if (rc)
         std::cerr << cudaGetErrorString(rc);
-    rc = cudaMemcpy2D(dev_gray_img, pitch,host_gray_img, width * sizeof(uint8_t), width * sizeof(uint8_t), height, cudaMemcpyHostToDevice);
+    rc = cudaMemcpy2D(dev_gray_img, pitch, host_gray_img, width * sizeof(uint8_t), width * sizeof(uint8_t), height, cudaMemcpyHostToDevice);
     if (rc)
         std::cerr << cudaGetErrorString(rc) << std::endl;
 
@@ -322,24 +344,35 @@ int main(int argc, char **argv) {
     cudaFree(dev_gray_img);
 
     // Patch calculation
-    uint8_t* response;
-    size_t response_pitch;
-    rc = cudaMallocPitch(&response, &response_pitch, patch_width * sizeof(uint8_t), patch_height);
-    compute_response<<<dimGrid, dimBlock>>>(sobel_x, sobel_y, response,
+    uint8_t* buffer1;
+    size_t buffer1_pitch;
+    rc = cudaMallocPitch(&buffer1, &buffer1_pitch, patch_width * sizeof(uint8_t), patch_height);
+    compute_response<<<dimGrid, dimBlock>>>(sobel_x, sobel_y, buffer1,
                                                 width, height, patch_size,
-                                                sobelx_pitch, sobely_pitch, response_pitch);
+                                                sobelx_pitch, sobely_pitch, buffer1_pitch);
 
-    uint8_t* buffer;
-    size_t buffer_pitch;
-    rc = cudaMallocPitch(&buffer, &buffer_pitch, patch_width * sizeof(uint8_t), patch_height);
-    compute_dilation<<<dimGrid, dimBlock>>>(response, buffer, patch_width, patch_height, response_pitch, buffer_pitch);
-    compute_erosion<<<dimGrid, dimBlock>>>(buffer, response, patch_width, patch_height, buffer_pitch, response_pitch);
+    // Dilation + Erosion
+    uint8_t* buffer2;
+    size_t buffer2_pitch;
+    rc = cudaMallocPitch(&buffer2, &buffer2_pitch, patch_width * sizeof(uint8_t), patch_height);
+    compute_dilation<<<dimGrid, dimBlock>>>(buffer1, buffer2, patch_width, patch_height, buffer1_pitch, buffer2_pitch);
+    compute_erosion<<<dimGrid, dimBlock>>>(buffer2, buffer1, patch_width, patch_height, buffer2_pitch, buffer1_pitch);
+
+    // Thresholding
+    uint8_t* image_host = (uint8_t*) malloc(patch_height * patch_width * sizeof(uint8_t));
+    rc = cudaMemcpy2D(image_host, patch_width * sizeof(uint8_t), buffer1, buffer1_pitch, patch_width * sizeof(uint8_t), patch_height, cudaMemcpyDeviceToHost);
+    std::uint8_t threshold = max(image_host, patch_height * patch_width) / 2;
+    free(image_host);
+    binarize<<<dimGrid, dimBlock>>>(buffer1, patch_width, patch_height, threshold, buffer1_pitch);
+
+    // Connect Components
+    
 
     // Upscale Image to native res
     uint8_t* result_dev;
     size_t result_pitch;
     rc = cudaMallocPitch(&result_dev, &result_pitch, width * sizeof(uint8_t), height);
-    upscale<<<dimGrid, dimBlock>>>(response, result_dev, width, height, patch_size, response_pitch, result_pitch);
+    upscale<<<dimGrid, dimBlock>>>(buffer1, result_dev, width, height, patch_size, buffer1_pitch, result_pitch);
 
     // Output Result
     uint8_t* result_image = (uint8_t*) malloc(width * height * sizeof(uint8_t));
@@ -354,7 +387,6 @@ int main(int argc, char **argv) {
 }
 /*
 
-
 std::uint8_t min(std::uint8_t *array, int length) {
     std::uint8_t min = 255;
 
@@ -366,92 +398,6 @@ std::uint8_t min(std::uint8_t *array, int length) {
     return min;
 }
 
-std::uint8_t max(std::uint8_t *array, int length) {
-    std::uint8_t max = 0;
-
-    for (int i = 0; i < length; i++) {
-        if (array[i] > max)
-            max = array[i];
-    }
-
-    return max;
-}
-
-void compute_kernel(std::uint8_t *response, std::uint8_t *kernel, int i, int j) {
-    int patch_height = height / patch_size;
-    int patch_width = width / patch_size;
-
-    kernel[0] = i > 0 && j > 1 ? *(response + (i - 1)  * patch_width + (j - 2)) : 0;
-    kernel[1] = i > 0 && j > 0 ? *(response + (i - 1) * patch_width + (j - 1)) : 0;
-    kernel[2] = i > 0 ? *(response + (i - 1) * patch_width + j) : 0;
-    kernel[3] = i > 0 && j < (patch_width - 1) ? *(response + (i - 1) * patch_width + (j + 1)) : 0;
-    kernel[4] = i > 0 && j < (patch_width - 2) ? *(response + (i - 1) * patch_width + (j + 2)) : 0;
-
-    kernel[5] = j > 1 ? *(response + i * patch_width + (j - 2)) : 0;
-    kernel[6] = j > 0 ? *(response + i * patch_width + (j - 1)) : 0;
-    kernel[7] = *(response + i * patch_width + j);
-    kernel[8] = j < (patch_width - 1) ? *(response + i * patch_width + (j + 1)) : 0;
-    kernel[9] = j < (patch_width - 2) ? *(response + i * patch_width + (j + 2)) : 0;
-
-    kernel[10] = i < (patch_height - 1) && j > 1 ? *(response + (i + 1) * patch_width + (j - 2)) : 0;
-    kernel[11] = i < (patch_height - 1) && j > 0 ? *(response + (i + 1) * patch_width + (j - 1)) : 0;
-    kernel[12] = i < (patch_height - 1) ? *(response + (i + 1) * patch_width + j) : 0;
-    kernel[13] = i < (patch_height - 1) && j < (patch_width - 1) ? *(response + (i + 1) * patch_width + (j + 1)) : 0;
-    kernel[14] = i < (patch_height - 1) && j < (patch_width - 2) ? *(response + (i + 1) * patch_width + (j + 2)) : 0;
-}
-
-std::uint8_t *dilation(std::uint8_t *response) {
-    int patch_height = height / patch_size;
-    int patch_width = width / patch_size;
-
-    std::uint8_t *kernel = (std::uint8_t *) malloc(15);
-    std::uint8_t *img = (std::uint8_t *) malloc(patch_height * patch_width);
-
-    for (int i = 0; i < patch_height; i++) {
-        for (int j = 0; j < patch_width; j++) {
-            compute_kernel(response, kernel, i, j);
-
-            std::uint8_t m = max(kernel, 15);
-            *(img + i * patch_width + j) = m;
-        }
-    }
-
-    free(kernel);
-    free(response);
-    return img;
-}
-
-std::uint8_t *erosion(std::uint8_t *response) {
-    int patch_height = height / patch_size;
-    int patch_width = width / patch_size;
-
-    std::uint8_t *kernel = (std::uint8_t *) malloc(15);
-    std::uint8_t *img = (std::uint8_t *) malloc(patch_height * patch_width);
-
-    for (int i = 0; i < patch_height; i++) {
-        for (int j = 0; j < patch_width; j++) {
-            compute_kernel(response, kernel, i, j);
-
-            std::uint8_t m = min(kernel, 15);
-            *(img + i * patch_width + j) = m;
-        }
-    }
-
-    free(kernel);
-    free(response);
-    return img;
-}
-
-void activation_map(std::uint8_t *response, std::uint8_t threshold) {
-    int patch_height = height / patch_size;
-    int patch_width = width / patch_size;
-
-    for (int i = 0; i < patch_height; i++) {
-        for (int j = 0; j < patch_width; j++) {
-            *(response + i * patch_width + j) = *(response + i * patch_width + j) > threshold ? 255 : 0;
-        }
-    }
-}
 
 void connect_component(std::uint8_t *response) {
     int patch_height = height / patch_size;
