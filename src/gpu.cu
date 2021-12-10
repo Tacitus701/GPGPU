@@ -247,6 +247,28 @@ __global__ void compute_erosion(uint8_t* buffer_in, uint8_t* buffer_out,
     buffer_out[y * pitch_out + x] = min;
 }
 
+__global__ void connect_components(uint8_t* buffer_in, uint8_t* buffer_out,
+                                int width, int height,
+                                size_t pitch_in, size_t pitch_out)
+{
+    int x = blockDim.x * blockIdx.x + threadIdx.x;
+    int y = blockDim.y * blockIdx.y + threadIdx.y;
+
+    if (x >= width || y >= height)
+        return;
+
+    int count = 0;
+
+    for (int i = -1; i <= 1; i++) {
+        for (int j = -1; j <= 1; j++) {
+            if (x + i >= 0 && x + i < width && y + j >= 0 && y + j < height && buffer_in[(y + j) * pitch_in + (x + i)] > 0)
+                count++;
+        }
+    }
+
+    buffer_out[y * pitch_out + x] = count >= 2 ? 255 : buffer_in[y * pitch_in + x];
+}
+
 __global__ void upscale(uint8_t* patches, uint8_t* output, int width, int height, int patch_size, size_t pitch_in, size_t pitch_out) {
     
     int x = blockDim.x * blockIdx.x + threadIdx.x;
@@ -366,13 +388,13 @@ int main(int argc, char **argv) {
     binarize<<<dimGrid, dimBlock>>>(buffer1, patch_width, patch_height, threshold, buffer1_pitch);
 
     // Connect Components
-    
+    connect_components<<<dimGrid, dimBlock>>>(buffer1, buffer2, patch_width, patch_height,buffer1_pitch, buffer2_pitch);
 
     // Upscale Image to native res
     uint8_t* result_dev;
     size_t result_pitch;
     rc = cudaMallocPitch(&result_dev, &result_pitch, width * sizeof(uint8_t), height);
-    upscale<<<dimGrid, dimBlock>>>(buffer1, result_dev, width, height, patch_size, buffer1_pitch, result_pitch);
+    upscale<<<dimGrid, dimBlock>>>(buffer2, result_dev, width, height, patch_size, buffer2_pitch, result_pitch);
 
     // Output Result
     uint8_t* result_image = (uint8_t*) malloc(width * height * sizeof(uint8_t));
@@ -386,18 +408,6 @@ int main(int argc, char **argv) {
     
 }
 /*
-
-std::uint8_t min(std::uint8_t *array, int length) {
-    std::uint8_t min = 255;
-
-    for (int i = 0; i < length; i++) {
-        if (array[i] < min)
-            min = array[i];
-    }
-
-    return min;
-}
-
 
 void connect_component(std::uint8_t *response) {
     int patch_height = height / patch_size;
