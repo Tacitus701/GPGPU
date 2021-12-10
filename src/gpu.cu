@@ -42,20 +42,11 @@ void write_png(png_bytep buffer, const char* filename, int width, int height) {
   fclose(fp);
 }
 
-void err_fn(png_structp png_ptr, png_const_charp err_msg) {
-    std::cout << err_msg;
-}
-
-void warn_fn(png_structp png_ptr, png_const_charp err_msg) {
-    std::cout << err_msg;
-}
-
-
 void read_png(const char *filename, int* width, int* height, png_bytep** row_pointers)
 {
     FILE *fp = fopen(filename, "rb");
 
-    png_structp png = png_create_read_struct(PNG_LIBPNG_VER_STRING, NULL, err_fn, warn_fn);
+    png_structp png = png_create_read_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
     if(!png) abort();
 
     png_infop info = png_create_info_struct(png);
@@ -112,14 +103,6 @@ void read_png(const char *filename, int* width, int* height, png_bytep** row_poi
     png_destroy_read_struct(&png, &info, NULL);
 }
 
-char* flatten_img(png_bytep* img, int height, int width) {
-    char* r = (char*) malloc(4 * height * width * sizeof(char));
-    for (int i = 0; i < height; i++) {
-        memcpy(r + 4 * width, img[i], 4 * width);
-    }
-    return r;
-}
-
 std::uint8_t *img_to_grayscale(png_bytep *img, int width, int height) {
     std::uint8_t *gray_img = (std::uint8_t *)malloc(width * height * sizeof(std::uint8_t));
     for (int i = 0; i < height; i++) {
@@ -133,7 +116,32 @@ std::uint8_t *img_to_grayscale(png_bytep *img, int width, int height) {
     return gray_img;
 }
 
-__global__ void to_grayscale(char* buffer_in, uint8_t* buffer_out, int width, int height, size_t pitch_in, size_t pitch_out)
+__device__ void mm_sobel(uint8_t* values, uint8_t* result_x, uint8_t* result_y) {
+    int kernel_x[9] = {-1, 0, 1, -2, 0, 2, -1, 0, 1};
+    int kernel_y[9] = {-1, -2, -1, 0, 0, 0, 1, 2, 1};
+
+    int x = 0;
+    int y = 0;
+
+    for (int i = 0; i < 9; i++) {
+        x += values[i] * kernel_x[i];
+        y += values[i] * kernel_y[i];
+    }
+
+    x = x > 255 ? 255 : x;
+    x = x < 0 ? 0 : x;
+
+    y = y > 255 ? 255 : y;
+    y = y < 0 ? 0 : y;
+
+    *result_x = x;
+    *result_y = y;
+
+}
+
+__global__ void compute_sobel(uint8_t* buffer_in, uint8_t* sobel_x, uint8_t* sobel_y,
+                                int width, int height,
+                                size_t pitch_in, size_t pitch_x, size_t pitch_y)
 {
     int x = blockDim.x * blockIdx.x + threadIdx.x;
     int y = blockDim.y * blockIdx.y + threadIdx.y;
@@ -141,8 +149,27 @@ __global__ void to_grayscale(char* buffer_in, uint8_t* buffer_out, int width, in
     if (x >= width || y >= height)
         return;
 
-    char* px = buffer_in + y * pitch_in + x * 4;
-    buffer_out[y * pitch_out + x] = 0.2126 * px[0] + 0.7152 * px[1] + 0.0722 * px[2];
+    uint8_t values[9];
+
+    values[0] = (y > 0 && x > 0) ? buffer_in[(y - 1) * pitch_in + (x - 1)] : 0;
+    values[1] = y > 0 ? buffer_in[(y - 1) * pitch_in + x] : 0;
+    values[2] = (y > 0 && x < width) ? buffer_in[(y - 1) * pitch_in + (x + 1)] : 0;
+
+    values[3] = x > 0 ? buffer_in[y * pitch_in + (x - 1)] : 0;
+    values[4] = buffer_in[y * pitch_in + x];
+    values[5] = x < width ? buffer_in[y * pitch_in + (x + 1)] : 0;
+
+    values[6] = (y < height && x > 0) ? buffer_in[(y + 1) * pitch_in + (x - 1)] : 0;
+    values[7] = (y < height) ? buffer_in[(y + 1) * pitch_in + x] : 0;
+    values[8] = (y < height && x < width) ? buffer_in[(y + 1) * pitch_in + (x + 1)] : 0;
+
+    uint8_t result_x = 0;
+    uint8_t result_y = 0;
+
+    mm_sobel(values, &result_x, &result_y);
+
+    sobel_x[y * pitch_x + x] = result_x;
+    sobel_y[y * pitch_y + x] = result_y;
 }
 
 int main(int argc, char **argv) {
@@ -157,46 +184,60 @@ int main(int argc, char **argv) {
 
     int patch_height = height / patch_size;
     int patch_width = width / patch_size;
-
-    // Original Image
-    char* original_img = flatten_img(row_pointers, height, width);
-    char* dev_original_image;
-    size_t original_pitch;
     
-    cudaError_t rc = cudaMallocPitch(&dev_original_image, &original_pitch, 4 * width * sizeof(char), height);
+    // To Grayscale
+    uint8_t* host_gray_img = img_to_grayscale(row_pointers, width, height);
+    uint8_t* dev_gray_img;
+    size_t pitch;
+    cudaError_t rc = cudaMallocPitch(&dev_gray_img, &pitch, width * sizeof(uint8_t), height);
     if (rc)
         std::cerr << cudaGetErrorString(rc);
-    /*
-    // Free original pointers
+    rc = cudaMemcpy2D(dev_gray_img, pitch,host_gray_img, width * sizeof(uint8_t), width * sizeof(uint8_t), height, cudaMemcpyHostToDevice);
+    if (rc)
+        std::cerr << cudaGetErrorString(rc) << std::endl;
+
+    // Free original memory
     for (int y = 0; y < height; y++) {
         free(row_pointers[y]);
     }
     free(row_pointers);
     
-    // To Grayscale
-    uint8_t* host_gray_img = (uint8_t*) malloc(width * height * sizeof(uint8_t));
-    uint8_t* dev_gray_img;
-    size_t pitch;
-    rc = cudaMallocPitch(&dev_gray_img, &pitch, width * sizeof(uint8_t), height);
-    if (rc)
-        std::cerr << cudaGetErrorString(rc);
-    //uint8_t* gray_img = img_to_grayscale(row_pointers, width, height);
+    // Kernel execution Parameters
     int bsize = 32;
     dim3 dimBlock(bsize, bsize);
     dim3 dimGrid(width / bsize, height / bsize);
-    to_grayscale<<<dimGrid, dimBlock>>>(dev_original_image, dev_gray_img, width, height, original_pitch, pitch);
+
+    // Sobel filters
+    uint8_t* sobel_x;
+    size_t sobelx_pitch;
+    uint8_t* sobel_y;
+    size_t sobely_pitch;
+
+    rc = cudaMallocPitch(&sobel_x, &sobelx_pitch, width * sizeof(uint8_t), height);
+    rc = cudaMallocPitch(&sobel_y, &sobely_pitch, width * sizeof(uint8_t), height);
+
+    compute_sobel<<<dimGrid, dimBlock>>>(dev_gray_img,
+                                            sobel_x, 
+                                            sobel_y, 
+                                            width, 
+                                            height, 
+                                            pitch, 
+                                            sobelx_pitch, 
+                                            sobely_pitch);
 
     if (cudaPeekAtLastError())
         std::cerr << "Computation Error";
 
-    rc = cudaMemcpy2D(host_gray_img, width * sizeof(uint8_t), dev_gray_img, pitch, width, height, cudaMemcpyDeviceToHost);
+    // Output Result
+    uint8_t* result_image = (uint8_t*) malloc(width * height * sizeof(uint8_t));
+    rc = cudaMemcpy2D(result_image, width * sizeof(uint8_t), sobel_x, pitch, width * sizeof(uint8_t), height, cudaMemcpyDeviceToHost);
     if (rc)
         std::cerr << cudaGetErrorString(rc) << std::endl;
-
-    write_png(host_gray_img, "res/gray.png", width, height);
+    write_png(result_image, "res/result.png", width, height);
     
+    // Free memory
     cudaFree(dev_gray_img);
-    free(host_gray_img);*/
+    free(host_gray_img);
     
 }
 /*
