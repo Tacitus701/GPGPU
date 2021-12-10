@@ -203,6 +203,50 @@ __global__ void compute_response(uint8_t* sobel_x, uint8_t* sobel_y, uint8_t* re
     response[y * pitch_out + x] = delta;
 }
 
+__global__ void compute_dilation(uint8_t* buffer_in, uint8_t* buffer_out,
+                                int width, int height,
+                                size_t pitch_in, size_t pitch_out)
+{
+    int x = blockDim.x * blockIdx.x + threadIdx.x;
+    int y = blockDim.y * blockIdx.y + threadIdx.y;
+
+    if (x >= width || y >= height)
+        return;
+
+    uint8_t max = 0;
+
+    for (int i = -2; i <= 2; i++) {
+        for (int j = -1; j <= 1; j++) {
+            if (x + i >= 0 && x + i < width && y + j >= 0 && y + j < height && buffer_in[(y + j) * pitch_in + (x + i)] > max)
+                max = buffer_in[(y + j) * pitch_in + (x + i)];
+        }
+    }
+
+    buffer_out[y * pitch_out + x] = max;
+}
+
+__global__ void compute_erosion(uint8_t* buffer_in, uint8_t* buffer_out,
+                                int width, int height,
+                                size_t pitch_in, size_t pitch_out)
+{
+    int x = blockDim.x * blockIdx.x + threadIdx.x;
+    int y = blockDim.y * blockIdx.y + threadIdx.y;
+
+    if (x >= width || y >= height)
+        return;
+
+    uint8_t min = 255;
+
+    for (int i = -2; i <= 2; i++) {
+        for (int j = -1; j <= 1; j++) {
+            if (x + i >= 0 && x + i < width && y + j >= 0 && y + j < height && buffer_in[(y + j) * pitch_in + (x + i)] < min)
+                min = buffer_in[(y + j) * pitch_in + (x + i)];
+        }
+    }
+
+    buffer_out[y * pitch_out + x] = min;
+}
+
 __global__ void upscale(uint8_t* patches, uint8_t* output, int width, int height, int patch_size, size_t pitch_in, size_t pitch_out) {
     
     int x = blockDim.x * blockIdx.x + threadIdx.x;
@@ -285,6 +329,12 @@ int main(int argc, char **argv) {
                                                 width, height, patch_size,
                                                 sobelx_pitch, sobely_pitch, response_pitch);
 
+    uint8_t* buffer;
+    size_t buffer_pitch;
+    rc = cudaMallocPitch(&buffer, &buffer_pitch, patch_width * sizeof(uint8_t), patch_height);
+    compute_dilation<<<dimGrid, dimBlock>>>(response, buffer, patch_width, patch_height, response_pitch, buffer_pitch);
+    compute_erosion<<<dimGrid, dimBlock>>>(buffer, response, patch_width, patch_height, buffer_pitch, response_pitch);
+
     // Upscale Image to native res
     uint8_t* result_dev;
     size_t result_pitch;
@@ -325,24 +375,6 @@ std::uint8_t max(std::uint8_t *array, int length) {
     }
 
     return max;
-}
-
-void patch_to_img(std::uint8_t *patches, const char *filename) {
-    std::uint8_t *img = (std::uint8_t *) malloc(height * width);
-    int patch_height = height / patch_size;
-    int patch_width = width / patch_size;
-
-    height = patch_height * patch_size;
-    width = patch_width * patch_size;
-
-    for (int i = 0; i < height; i++) {
-        for (int j = 0; j < width; j++) {
-            *(img + i * width + j) = *(patches + (i / patch_size) * patch_width + (j / patch_size));
-        }
-    }
-
-    write_png(img, filename);
-    free(img);
 }
 
 void compute_kernel(std::uint8_t *response, std::uint8_t *kernel, int i, int j) {
