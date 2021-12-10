@@ -112,6 +112,14 @@ void read_png(const char *filename, int* width, int* height, png_bytep** row_poi
     png_destroy_read_struct(&png, &info, NULL);
 }
 
+char* flatten_img(png_bytep* img, int height, int width) {
+    char* r = (char*) malloc(4 * height * width * sizeof(char));
+    for (int i = 0; i < height; i++) {
+        memcpy(r + 4 * width, img[i], 4 * width);
+    }
+    return r;
+}
+
 std::uint8_t *img_to_grayscale(png_bytep *img, int width, int height) {
     std::uint8_t *gray_img = (std::uint8_t *)malloc(width * height * sizeof(std::uint8_t));
     for (int i = 0; i < height; i++) {
@@ -125,7 +133,7 @@ std::uint8_t *img_to_grayscale(png_bytep *img, int width, int height) {
     return gray_img;
 }
 
-__global__ void to_grayscale(png_bytep* buffer_in, uint8_t* buffer_out, int width, int height, size_t pitch)
+__global__ void to_grayscale(char* buffer_in, uint8_t* buffer_out, int width, int height, size_t pitch_in, size_t pitch_out)
 {
     int x = blockDim.x * blockIdx.x + threadIdx.x;
     int y = blockDim.y * blockIdx.y + threadIdx.y;
@@ -133,12 +141,13 @@ __global__ void to_grayscale(png_bytep* buffer_in, uint8_t* buffer_out, int widt
     if (x >= width || y >= height)
         return;
 
-    png_bytep px = &(buffer_in[x][y * 4]);
-    buffer_out[y * pitch + x] = 0.2126 * px[0] + 0.7152 * px[1] + 0.0722 * px[2];
+    char* px = buffer_in + y * pitch_in + x * 4;
+    buffer_out[y * pitch_out + x] = 0.2126 * px[0] + 0.7152 * px[1] + 0.0722 * px[2];
 }
 
 int main(int argc, char **argv) {
 
+    // Read Image
     int width, height;
     png_bytep* row_pointers;
     int patch_size = 32;
@@ -149,32 +158,46 @@ int main(int argc, char **argv) {
     int patch_height = height / patch_size;
     int patch_width = width / patch_size;
 
-    uint8_t* host_gray_img = (uint8_t*) malloc(width * height * sizeof(std::uint8_t));
+    // Original Image
+    char* original_img = flatten_img(row_pointers, height, width);
+    char* dev_original_image;
+    size_t original_pitch;
+    
+    cudaError_t rc = cudaMallocPitch(&dev_original_image, &original_pitch, 4 * width * sizeof(char), height);
+    if (rc)
+        std::cerr << cudaGetErrorString(rc);
+    /*
+    // Free original pointers
+    for (int y = 0; y < height; y++) {
+        free(row_pointers[y]);
+    }
+    free(row_pointers);
+    
+    // To Grayscale
+    uint8_t* host_gray_img = (uint8_t*) malloc(width * height * sizeof(uint8_t));
     uint8_t* dev_gray_img;
     size_t pitch;
-    cudaError_t rc = cudaMallocPitch(&dev_gray_img, &pitch, width * sizeof(uint8_t), height);
+    rc = cudaMallocPitch(&dev_gray_img, &pitch, width * sizeof(uint8_t), height);
     if (rc)
         std::cerr << cudaGetErrorString(rc);
     //uint8_t* gray_img = img_to_grayscale(row_pointers, width, height);
     int bsize = 32;
     dim3 dimBlock(bsize, bsize);
     dim3 dimGrid(width / bsize, height / bsize);
-    to_grayscale<<<dimGrid, dimBlock>>>(row_pointers, dev_gray_img, width, height, pitch);
+    to_grayscale<<<dimGrid, dimBlock>>>(dev_original_image, dev_gray_img, width, height, original_pitch, pitch);
 
     if (cudaPeekAtLastError())
         std::cerr << "Computation Error";
 
-    rc = cudaMemcpy2D(host_gray_img, width, dev_gray_img, pitch, width * sizeof(uint8_t), height, cudaMemcpyDeviceToHost);
+    rc = cudaMemcpy2D(host_gray_img, width * sizeof(uint8_t), dev_gray_img, pitch, width, height, cudaMemcpyDeviceToHost);
+    if (rc)
+        std::cerr << cudaGetErrorString(rc) << std::endl;
 
     write_png(host_gray_img, "res/gray.png", width, height);
-
     
     cudaFree(dev_gray_img);
-    free(host_gray_img);
-    for (int y = 0; y < height; y++) {
-        free(row_pointers[y]);
-    }
-    free(row_pointers);
+    free(host_gray_img);*/
+    
 }
 /*
 void compute_sobel(std::uint8_t current[9], std::uint8_t *result_x, std::uint8_t *result_y) {
