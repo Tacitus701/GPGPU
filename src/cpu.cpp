@@ -112,7 +112,7 @@ void read_png(const char *filename)
 std::uint8_t *img_to_grayscale(png_bytep *img) {
     std::uint8_t *gray_img = (std::uint8_t *)malloc(width * height * sizeof(std::uint8_t));
     for (int i = 0; i < height; i++) {
-        png_bytep row = row_pointers[i];
+        png_bytep row = img[i];
         std::uint8_t *my_row = gray_img + i * width;
         for (int j = 0; j < width; j++) {
             png_bytep px = &(row[j * 4]);
@@ -355,6 +355,10 @@ void connect_component(std::uint8_t *response) {
 }
 
 int main(int argc, char **argv) {
+    if (argc < 2) {
+        printf("Missing input img\n");
+        return 1;
+    }
     const char *filename = argv[1];
     read_png(filename);
 
