@@ -4,8 +4,6 @@
 #include <algorithm>
 #include <png.h>
 
-__managed__ unsigned int threshold_uint;
-
 void write_png(png_bytep buffer, const char* filename, int width, int height) {
   png_structp png_ptr =
     png_create_write_struct(PNG_LIBPNG_VER_STRING, nullptr, nullptr, nullptr);
@@ -206,7 +204,7 @@ __global__ void compute_response(uint8_t* sobel_x, uint8_t* sobel_y, uint8_t* re
 
 __global__ void compute_dilation(uint8_t* buffer_in, uint8_t* buffer_out,
                                 int width, int height,
-                                size_t pitch_in, size_t pitch_out)//, unsigned int *threshold_uint)
+                                size_t pitch_in, size_t pitch_out, unsigned int *threshold_uint)
 {
     int x = blockDim.x * blockIdx.x + threadIdx.x;
     int y = blockDim.y * blockIdx.y + threadIdx.y;
@@ -231,7 +229,7 @@ __global__ void compute_dilation(uint8_t* buffer_in, uint8_t* buffer_out,
 
     atomicMax(&local_max, max);
     __syncthreads();
-    if (threadIdx.x == 0 && threadIdx.y == 0) atomicMax(&threshold_uint, local_max);
+    if (threadIdx.x == 0 && threadIdx.y == 0) atomicMax(threshold_uint, local_max);
     //__syncthreads();
     //check if max is greater than global max atomic max
     //if (threadIdx.x == 0 && threadIdx.y == 0) atomicMax(threshold_uint, local_max);
@@ -411,20 +409,17 @@ int main(int argc, char **argv) {
         std::cerr << cudaGetErrorString(rc) << std::endl;
 
     //unsigned int threshold_uint = 0;
-    //unsigned int* device_threshold_uint;
-    //cudaMalloc(&device_threshold_uint, sizeof(unsigned int));
-    threshold_uint = 0;
-    compute_dilation<<<dimGrid, dimBlock, sizeof(unsigned int)>>>(buffer1, buffer2, patch_width, patch_height, buffer1_pitch, buffer2_pitch);//, device_threshold_uint);
-    cudaDeviceSynchronize();
-
+    unsigned int* device_threshold_uint;
+    cudaMalloc(&device_threshold_uint, sizeof(unsigned int));
+    compute_dilation<<<dimGrid, dimBlock, sizeof(unsigned int)>>>(buffer1, buffer2, patch_width, patch_height, buffer1_pitch, buffer2_pitch, device_threshold_uint);
     if (cudaPeekAtLastError())
         std::cerr << "Computation Error";
 
-    //unsigned int host_threshold_uint;
-    //cudaMemcpy(&host_threshold_uint, device_threshold_uint, sizeof(unsigned int), cudaMemcpyDeviceToHost);
-    //cudaFree(device_threshold_uint);
-
-    std::uint8_t threshold = (std::uint8_t)(threshold_uint / 2);
+    unsigned int host_threshold_uint;
+    cudaMemcpy(&host_threshold_uint, device_threshold_uint, sizeof(unsigned int), cudaMemcpyDeviceToHost);
+    cudaFree(device_threshold_uint);
+        
+    std::uint8_t threshold = (std::uint8_t)(host_threshold_uint / 2);
     
     compute_erosion<<<dimGrid, dimBlock>>>(buffer2, buffer1, patch_width, patch_height, buffer2_pitch, buffer1_pitch);
     if (cudaPeekAtLastError())
