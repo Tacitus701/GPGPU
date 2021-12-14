@@ -1,6 +1,3 @@
-#include <cstddef>
-#include <string>
-
 #include <png.h>
 
 int width, height;
@@ -386,14 +383,5 @@ void detect_barcode(const char* filename) {
     free(sobel_x);
     free(sobel_y);
     free(response);
-    return 0;
 }
 
-int main(int argc, char **argv) {
-    if (argc < 2) {
-        printf("Missing input img\n");
-        return 1;
-    }
-    const char *filename = argv[1];
-    detect_barcode(filename);
-}
