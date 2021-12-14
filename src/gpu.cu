@@ -4,6 +4,8 @@
 #include <algorithm>
 #include <png.h>
 
+__managed__ unsigned int threshold_uint;
+
 void write_png(png_bytep buffer, const char* filename, int width, int height) {
   png_structp png_ptr =
     png_create_write_struct(PNG_LIBPNG_VER_STRING, nullptr, nullptr, nullptr);
@@ -204,7 +206,7 @@ __global__ void compute_response(uint8_t* sobel_x, uint8_t* sobel_y, uint8_t* re
 
 __global__ void compute_dilation(uint8_t* buffer_in, uint8_t* buffer_out,
                                 int width, int height,
-                                size_t pitch_in, size_t pitch_out, uint8_t global_max)
+                                size_t pitch_in, size_t pitch_out)//, unsigned int *threshold_uint)
 {
     int x = blockDim.x * blockIdx.x + threadIdx.x;
     int y = blockDim.y * blockIdx.y + threadIdx.y;
@@ -213,6 +215,10 @@ __global__ void compute_dilation(uint8_t* buffer_in, uint8_t* buffer_out,
         return;
 
     uint8_t max = 0;
+    __shared__ unsigned int local_max;
+    unsigned int global_max = 0;
+    if (threadIdx.x == 0 && threadIdx.y == 0) local_max = 0;
+    __syncthreads();
 
     for (int i = -2; i <= 2; i++) {
         for (int j = -1; j <= 1; j++) {
@@ -222,8 +228,14 @@ __global__ void compute_dilation(uint8_t* buffer_in, uint8_t* buffer_out,
     }
 
     buffer_out[y * pitch_out + x] = max;
+
+    atomicMax(&local_max, max);
+    __syncthreads();
+    if (threadIdx.x == 0 && threadIdx.y == 0) atomicMax(&threshold_uint, local_max);
+    //__syncthreads();
     //check if max is greater than global max atomic max
-    atomicMax(&global_max, max);
+    //if (threadIdx.x == 0 && threadIdx.y == 0) atomicMax(threshold_uint, local_max);
+    //if (threadIdx.x == 0 && threadIdx.y == 0 && blockDim.x ==0 && blockDim.y == 0) *threshold_uint = global_max;
 }
 
 __global__ void compute_erosion(uint8_t* buffer_in, uint8_t* buffer_out,
@@ -398,11 +410,21 @@ int main(int argc, char **argv) {
     if (rc)
         std::cerr << cudaGetErrorString(rc) << std::endl;
 
-    std::uint8_t threshold;
-    compute_dilation<<<dimGrid, dimBlock>>>(buffer1, buffer2, patch_width, patch_height, buffer1_pitch, buffer2_pitch, threshold);
+    //unsigned int threshold_uint = 0;
+    //unsigned int* device_threshold_uint;
+    //cudaMalloc(&device_threshold_uint, sizeof(unsigned int));
+    threshold_uint = 0;
+    compute_dilation<<<dimGrid, dimBlock, sizeof(unsigned int)>>>(buffer1, buffer2, patch_width, patch_height, buffer1_pitch, buffer2_pitch);//, device_threshold_uint);
+    cudaDeviceSynchronize();
+
     if (cudaPeekAtLastError())
         std::cerr << "Computation Error";
-    threshold = threshold / 2;
+
+    //unsigned int host_threshold_uint;
+    //cudaMemcpy(&host_threshold_uint, device_threshold_uint, sizeof(unsigned int), cudaMemcpyDeviceToHost);
+    //cudaFree(device_threshold_uint);
+
+    std::uint8_t threshold = (std::uint8_t)(threshold_uint / 2);
     
     compute_erosion<<<dimGrid, dimBlock>>>(buffer2, buffer1, patch_width, patch_height, buffer2_pitch, buffer1_pitch);
     if (cudaPeekAtLastError())
