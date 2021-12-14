@@ -204,7 +204,7 @@ __global__ void compute_response(uint8_t* sobel_x, uint8_t* sobel_y, uint8_t* re
 
 __global__ void compute_dilation(uint8_t* buffer_in, uint8_t* buffer_out,
                                 int width, int height,
-                                size_t pitch_in, size_t pitch_out)
+                                size_t pitch_in, size_t pitch_out, uint8_t global_max)
 {
     int x = blockDim.x * blockIdx.x + threadIdx.x;
     int y = blockDim.y * blockIdx.y + threadIdx.y;
@@ -222,6 +222,8 @@ __global__ void compute_dilation(uint8_t* buffer_in, uint8_t* buffer_out,
     }
 
     buffer_out[y * pitch_out + x] = max;
+    //check if max is greater than global max atomic max
+    atomicMax(&global_max, max);
 }
 
 __global__ void compute_erosion(uint8_t* buffer_in, uint8_t* buffer_out,
@@ -396,23 +398,25 @@ int main(int argc, char **argv) {
     if (rc)
         std::cerr << cudaGetErrorString(rc) << std::endl;
 
-    compute_dilation<<<dimGrid, dimBlock>>>(buffer1, buffer2, patch_width, patch_height, buffer1_pitch, buffer2_pitch);
+    std::uint8_t threshold;
+    compute_dilation<<<dimGrid, dimBlock>>>(buffer1, buffer2, patch_width, patch_height, buffer1_pitch, buffer2_pitch, threshold);
     if (cudaPeekAtLastError())
         std::cerr << "Computation Error";
-
+    threshold = threshold / 2;
+    
     compute_erosion<<<dimGrid, dimBlock>>>(buffer2, buffer1, patch_width, patch_height, buffer2_pitch, buffer1_pitch);
     if (cudaPeekAtLastError())
         std::cerr << "Computation Error";
 
     // Thresholding
-    uint8_t* image_host = (uint8_t*) malloc(patch_height * patch_width * sizeof(uint8_t));
+    /*uint8_t* image_host = (uint8_t*) malloc(patch_height * patch_width * sizeof(uint8_t));
 
     rc = cudaMemcpy2D(image_host, patch_width * sizeof(uint8_t), buffer1, buffer1_pitch, patch_width * sizeof(uint8_t), patch_height, cudaMemcpyDeviceToHost);
     if (rc)
         std::cerr << cudaGetErrorString(rc) << std::endl;
 
     std::uint8_t threshold = max(image_host, patch_height * patch_width) / 2;
-    free(image_host);
+    free(image_host);*/
     
     binarize<<<dimGrid, dimBlock>>>(buffer1, patch_width, patch_height, threshold, buffer1_pitch);
     if (cudaPeekAtLastError())
