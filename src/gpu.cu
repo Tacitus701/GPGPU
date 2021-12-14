@@ -2,7 +2,6 @@
 #include <string>
 #include <iostream>
 #include <algorithm>
-
 #include <png.h>
 
 void write_png(png_bytep buffer, const char* filename, int width, int height) {
@@ -286,7 +285,7 @@ __global__ void connect_components(uint8_t* buffer_in, uint8_t* buffer_out,
         }
     }
 
-    buffer_out[y * pitch_out + x] = count >= 2 ? 255 : buffer_in[y * pitch_in + x];
+    buffer_out[y * pitch_out + x] = count >= 5 ? 255 : buffer_in[y * pitch_in + x];
 }
 
 __global__ void upscale(uint8_t* patches, uint8_t* output, int width, int height, int patch_size, size_t pitch_in, size_t pitch_out) {
@@ -345,7 +344,11 @@ int main(int argc, char **argv) {
     size_t sobely_pitch;
 
     rc = cudaMallocPitch(&sobel_x, &sobelx_pitch, width * sizeof(uint8_t), height);
+    if (rc)
+        std::cerr << cudaGetErrorString(rc) << std::endl;
     rc = cudaMallocPitch(&sobel_y, &sobely_pitch, width * sizeof(uint8_t), height);
+    if (rc)
+        std::cerr << cudaGetErrorString(rc) << std::endl;
 
     compute_sobel<<<dimGrid, dimBlock>>>(dev_gray_img,
                                             sobel_x, 
@@ -361,53 +364,93 @@ int main(int argc, char **argv) {
 
     // Free grayscale
     free(host_gray_img);
-    cudaFree(dev_gray_img);
+    rc = cudaFree(dev_gray_img);
+    if (rc)
+        std::cerr << cudaGetErrorString(rc) << std::endl;
 
     // Patch calculation
     uint8_t* buffer1;
     size_t buffer1_pitch;
     rc = cudaMallocPitch(&buffer1, &buffer1_pitch, patch_width * sizeof(uint8_t), patch_height);
+    if (rc)
+        std::cerr << cudaGetErrorString(rc) << std::endl;
     compute_response<<<dimGrid, dimBlock>>>(sobel_x, sobel_y, buffer1,
                                                 width, height, patch_size,
                                                 sobelx_pitch, sobely_pitch, buffer1_pitch);
 
+    if (cudaPeekAtLastError())
+        std::cerr << "Computation Error";
+
     // Free Sobel Images
-    cudaFree(sobel_x);
-    cudaFree(sobel_y);
+    rc = cudaFree(sobel_x);
+    if (rc)
+        std::cerr << cudaGetErrorString(rc) << std::endl;
+    rc = cudaFree(sobel_y);
+    if (rc)
+        std::cerr << cudaGetErrorString(rc) << std::endl;
 
     // Dilation + Erosion
     uint8_t* buffer2;
     size_t buffer2_pitch;
     rc = cudaMallocPitch(&buffer2, &buffer2_pitch, patch_width * sizeof(uint8_t), patch_height);
+    if (rc)
+        std::cerr << cudaGetErrorString(rc) << std::endl;
+
     compute_dilation<<<dimGrid, dimBlock>>>(buffer1, buffer2, patch_width, patch_height, buffer1_pitch, buffer2_pitch);
+    if (cudaPeekAtLastError())
+        std::cerr << "Computation Error";
+
     compute_erosion<<<dimGrid, dimBlock>>>(buffer2, buffer1, patch_width, patch_height, buffer2_pitch, buffer1_pitch);
+    if (cudaPeekAtLastError())
+        std::cerr << "Computation Error";
 
     // Thresholding
     uint8_t* image_host = (uint8_t*) malloc(patch_height * patch_width * sizeof(uint8_t));
+
     rc = cudaMemcpy2D(image_host, patch_width * sizeof(uint8_t), buffer1, buffer1_pitch, patch_width * sizeof(uint8_t), patch_height, cudaMemcpyDeviceToHost);
+    if (rc)
+        std::cerr << cudaGetErrorString(rc) << std::endl;
+
     std::uint8_t threshold = max(image_host, patch_height * patch_width) / 2;
     free(image_host);
+    
     binarize<<<dimGrid, dimBlock>>>(buffer1, patch_width, patch_height, threshold, buffer1_pitch);
+    if (cudaPeekAtLastError())
+        std::cerr << "Computation Error";
 
     // Connect Components
     connect_components<<<dimGrid, dimBlock>>>(buffer1, buffer2, patch_width, patch_height,buffer1_pitch, buffer2_pitch);
+    if (cudaPeekAtLastError())
+        std::cerr << "Computation Error";
 
     // Upscale Image to native res
     uint8_t* result_dev;
     size_t result_pitch;
     rc = cudaMallocPitch(&result_dev, &result_pitch, width * sizeof(uint8_t), height);
+    if (rc)
+        std::cerr << cudaGetErrorString(rc) << std::endl;
+
     upscale<<<dimGrid, dimBlock>>>(buffer2, result_dev, width, height, patch_size, buffer2_pitch, result_pitch);
+    if (cudaPeekAtLastError())
+        std::cerr << "Computation Error";
 
     // Output Result
     uint8_t* result_image = (uint8_t*) malloc(width * height * sizeof(uint8_t));
     rc = cudaMemcpy2D(result_image, width * sizeof(uint8_t), result_dev, result_pitch, width * sizeof(uint8_t), height, cudaMemcpyDeviceToHost);
     if (rc)
         std::cerr << cudaGetErrorString(rc) << std::endl;
+
     write_png(result_image, "res/result.png", width, height);
     
     // Free Memory
-    cudaFree(result_dev);
-    cudaFree(buffer1);
-    cudaFree(buffer2);
+    rc = cudaFree(result_dev);
+    if (rc)
+        std::cerr << cudaGetErrorString(rc) << std::endl;
+    rc = cudaFree(buffer1);
+    if (rc)
+        std::cerr << cudaGetErrorString(rc) << std::endl;
+    rc = cudaFree(buffer2);
+    if (rc)
+        std::cerr << cudaGetErrorString(rc) << std::endl;
     free(result_image);
 }
