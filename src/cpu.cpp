@@ -354,12 +354,7 @@ void connect_component(std::uint8_t *response) {
     }
 }
 
-int main(int argc, char **argv) {
-    if (argc < 2) {
-        printf("Missing input img\n");
-        return 1;
-    }
-    const char *filename = argv[1];
+void detect_barcode(const char* filename) {
     read_png(filename);
 
     int patch_height = height / patch_size;
@@ -392,4 +387,13 @@ int main(int argc, char **argv) {
     free(sobel_y);
     free(response);
     return 0;
+}
+
+int main(int argc, char **argv) {
+    if (argc < 2) {
+        printf("Missing input img\n");
+        return 1;
+    }
+    const char *filename = argv[1];
+    detect_barcode(filename);
 }
