@@ -375,24 +375,24 @@ void detect_barcode(const char* filename, const char *truth) {
     int patch_width = width / patch_size;
 
     std::uint8_t *gray_img = img_to_grayscale(row_pointers);
-    write_png(gray_img, "gray.png");
+    
 
     std::uint8_t *sobel_x = (std::uint8_t *)malloc(height * width);
     std::uint8_t *sobel_y = (std::uint8_t *)malloc(height * width);
     sobel_filter(gray_img, sobel_x, sobel_y);
-    write_png(sobel_x, "sobel_x.png");
-    write_png(sobel_y, "sobel_y.png");
+    
+    
 
     std::uint8_t *response = compute_response(sobel_x, sobel_y);
-    patch_to_img(response, "response.png");
+    
     response = dilation(response);
-    patch_to_img(response, "dilation.png");
+    
     response = erosion(response);
-    patch_to_img(response, "erosion.png");
+    
 
     std::uint8_t threshold = max(response, patch_height * patch_width) / 2;
     activation_map(response, threshold);
-    patch_to_img(response, "barcode.png");
+    
     connect_component(response);
     patch_to_img(response, "cc.png");
 
@@ -402,7 +402,7 @@ void detect_barcode(const char* filename, const char *truth) {
         std::uint8_t *gt = img_to_grayscale(row_pointers);
         std::uint8_t *error = compute_error(realsize_img, gt, height, width);
 
-        write_png(error, "error.png");
+        
 
         free(realsize_img);
         free(gt);
