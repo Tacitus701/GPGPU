@@ -3,6 +3,7 @@
 #include <iostream>
 #include <algorithm>
 #include <png.h>
+#include <chrono>
 
 void write_png(png_bytep buffer, const char* filename, int width, int height) {
   png_structp png_ptr =
@@ -204,7 +205,7 @@ __global__ void compute_response(uint8_t* sobel_x, uint8_t* sobel_y, uint8_t* re
 
 __global__ void compute_dilation(uint8_t* buffer_in, uint8_t* buffer_out,
                                 int width, int height,
-                                size_t pitch_in, size_t pitch_out)
+                                size_t pitch_in, size_t pitch_out, unsigned int *threshold_uint)
 {
     int x = blockDim.x * blockIdx.x + threadIdx.x;
     int y = blockDim.y * blockIdx.y + threadIdx.y;
@@ -213,6 +214,9 @@ __global__ void compute_dilation(uint8_t* buffer_in, uint8_t* buffer_out,
         return;
 
     uint8_t max = 0;
+    __shared__ unsigned int local_max;
+    if (threadIdx.x == 0 && threadIdx.y == 0) local_max = 0;
+    __syncthreads();
 
     for (int i = -2; i <= 2; i++) {
         for (int j = -1; j <= 1; j++) {
@@ -222,6 +226,14 @@ __global__ void compute_dilation(uint8_t* buffer_in, uint8_t* buffer_out,
     }
 
     buffer_out[y * pitch_out + x] = max;
+
+    atomicMax(&local_max, max);
+    __syncthreads();
+    if (threadIdx.x == 0 && threadIdx.y == 0) atomicMax(threshold_uint, local_max);
+    //__syncthreads();
+    //check if max is greater than global max atomic max
+    //if (threadIdx.x == 0 && threadIdx.y == 0) atomicMax(threshold_uint, local_max);
+    //if (threadIdx.x == 0 && threadIdx.y == 0 && blockDim.x ==0 && blockDim.y == 0) *threshold_uint = global_max;
 }
 
 __global__ void compute_erosion(uint8_t* buffer_in, uint8_t* buffer_out,
@@ -289,7 +301,7 @@ __global__ void connect_components(uint8_t* buffer_in, uint8_t* buffer_out,
 }
 
 __global__ void upscale(uint8_t* patches, uint8_t* output, int width, int height, int patch_size, size_t pitch_in, size_t pitch_out) {
-    
+
     int x = blockDim.x * blockIdx.x + threadIdx.x;
     int y = blockDim.y * blockIdx.y + threadIdx.y;
 
@@ -303,7 +315,7 @@ __global__ void upscale(uint8_t* patches, uint8_t* output, int width, int height
 }
 
 int main(int argc, char **argv) {
-
+    std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
     // Read Image
     int width, height;
     png_bytep* row_pointers;
@@ -311,10 +323,10 @@ int main(int argc, char **argv) {
 
     const char *filename = argv[1];
     read_png(filename, &width, &height, &row_pointers);
-    
+
     int patch_height = height / patch_size;
     int patch_width = width / patch_size;
-    
+
     // To Grayscale
     uint8_t* host_gray_img = img_to_grayscale(row_pointers, width, height);
     uint8_t* dev_gray_img;
@@ -396,23 +408,32 @@ int main(int argc, char **argv) {
     if (rc)
         std::cerr << cudaGetErrorString(rc) << std::endl;
 
-    compute_dilation<<<dimGrid, dimBlock>>>(buffer1, buffer2, patch_width, patch_height, buffer1_pitch, buffer2_pitch);
+    //unsigned int threshold_uint = 0;
+    unsigned int* device_threshold_uint;
+    cudaMalloc(&device_threshold_uint, sizeof(unsigned int));
+    compute_dilation<<<dimGrid, dimBlock, sizeof(unsigned int)>>>(buffer1, buffer2, patch_width, patch_height, buffer1_pitch, buffer2_pitch, device_threshold_uint);
     if (cudaPeekAtLastError())
         std::cerr << "Computation Error";
+
+    unsigned int host_threshold_uint;
+    cudaMemcpy(&host_threshold_uint, device_threshold_uint, sizeof(unsigned int), cudaMemcpyDeviceToHost);
+    cudaFree(device_threshold_uint);
+
+    std::uint8_t threshold = (std::uint8_t)(host_threshold_uint / 2);
 
     compute_erosion<<<dimGrid, dimBlock>>>(buffer2, buffer1, patch_width, patch_height, buffer2_pitch, buffer1_pitch);
     if (cudaPeekAtLastError())
         std::cerr << "Computation Error";
 
     // Thresholding
-    uint8_t* image_host = (uint8_t*) malloc(patch_height * patch_width * sizeof(uint8_t));
+    /*uint8_t* image_host = (uint8_t*) malloc(patch_height * patch_width * sizeof(uint8_t));
 
     rc = cudaMemcpy2D(image_host, patch_width * sizeof(uint8_t), buffer1, buffer1_pitch, patch_width * sizeof(uint8_t), patch_height, cudaMemcpyDeviceToHost);
     if (rc)
         std::cerr << cudaGetErrorString(rc) << std::endl;
 
     std::uint8_t threshold = max(image_host, patch_height * patch_width) / 2;
-    free(image_host);
+    free(image_host);*/
     
     binarize<<<dimGrid, dimBlock>>>(buffer1, patch_width, patch_height, threshold, buffer1_pitch);
     if (cudaPeekAtLastError())
@@ -441,7 +462,7 @@ int main(int argc, char **argv) {
         std::cerr << cudaGetErrorString(rc) << std::endl;
 
     write_png(result_image, "res/result.png", width, height);
-    
+
     // Free Memory
     rc = cudaFree(result_dev);
     if (rc)
@@ -453,4 +474,10 @@ int main(int argc, char **argv) {
     if (rc)
         std::cerr << cudaGetErrorString(rc) << std::endl;
     free(result_image);
+
+    std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
+    std::cout << "Time elapsed : " << std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin).count();
+    std::cout << " nanoseconds" << std::endl;
+    std::cout << "Time elapsed : " << std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count();
+    std::cout << " microseconds" << std::endl;
 }
