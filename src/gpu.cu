@@ -301,7 +301,7 @@ __global__ void connect_components(uint8_t* buffer_in, uint8_t* buffer_out,
 }
 
 __global__ void upscale(uint8_t* patches, uint8_t* output, int width, int height, int patch_size, size_t pitch_in, size_t pitch_out) {
-    
+
     int x = blockDim.x * blockIdx.x + threadIdx.x;
     int y = blockDim.y * blockIdx.y + threadIdx.y;
 
@@ -323,10 +323,10 @@ int main(int argc, char **argv) {
 
     const char *filename = argv[1];
     read_png(filename, &width, &height, &row_pointers);
-    
+
     int patch_height = height / patch_size;
     int patch_width = width / patch_size;
-    
+
     // To Grayscale
     uint8_t* host_gray_img = img_to_grayscale(row_pointers, width, height);
     uint8_t* dev_gray_img;
@@ -418,9 +418,9 @@ int main(int argc, char **argv) {
     unsigned int host_threshold_uint;
     cudaMemcpy(&host_threshold_uint, device_threshold_uint, sizeof(unsigned int), cudaMemcpyDeviceToHost);
     cudaFree(device_threshold_uint);
-        
+
     std::uint8_t threshold = (std::uint8_t)(host_threshold_uint / 2);
-    
+
     compute_erosion<<<dimGrid, dimBlock>>>(buffer2, buffer1, patch_width, patch_height, buffer2_pitch, buffer1_pitch);
     if (cudaPeekAtLastError())
         std::cerr << "Computation Error";
@@ -462,7 +462,7 @@ int main(int argc, char **argv) {
         std::cerr << cudaGetErrorString(rc) << std::endl;
 
     write_png(result_image, "res/result.png", width, height);
-    
+
     // Free Memory
     rc = cudaFree(result_dev);
     if (rc)
