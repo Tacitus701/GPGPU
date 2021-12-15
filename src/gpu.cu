@@ -3,6 +3,7 @@
 #include <iostream>
 #include <algorithm>
 #include <png.h>
+#include <chrono>
 
 void write_png(png_bytep buffer, const char* filename, int width, int height) {
   png_structp png_ptr =
@@ -214,7 +215,6 @@ __global__ void compute_dilation(uint8_t* buffer_in, uint8_t* buffer_out,
 
     uint8_t max = 0;
     __shared__ unsigned int local_max;
-    unsigned int global_max = 0;
     if (threadIdx.x == 0 && threadIdx.y == 0) local_max = 0;
     __syncthreads();
 
@@ -315,7 +315,7 @@ __global__ void upscale(uint8_t* patches, uint8_t* output, int width, int height
 }
 
 int main(int argc, char **argv) {
-
+    std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
     // Read Image
     int width, height;
     png_bytep* row_pointers;
@@ -474,4 +474,10 @@ int main(int argc, char **argv) {
     if (rc)
         std::cerr << cudaGetErrorString(rc) << std::endl;
     free(result_image);
+
+    std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
+    std::cout << "Time elapsed : " << std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin).count();
+    std::cout << " nanoseconds" << std::endl;
+    std::cout << "Time elapsed : " << std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count();
+    std::cout << " microseconds" << std::endl;
 }
