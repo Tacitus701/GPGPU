@@ -230,10 +230,6 @@ __global__ void compute_dilation(uint8_t* buffer_in, uint8_t* buffer_out,
     atomicMax(&local_max, max);
     __syncthreads();
     if (threadIdx.x == 0 && threadIdx.y == 0) atomicMax(threshold_uint, local_max);
-    //__syncthreads();
-    //check if max is greater than global max atomic max
-    //if (threadIdx.x == 0 && threadIdx.y == 0) atomicMax(threshold_uint, local_max);
-    //if (threadIdx.x == 0 && threadIdx.y == 0 && blockDim.x ==0 && blockDim.y == 0) *threshold_uint = global_max;
 }
 
 __global__ void compute_erosion(uint8_t* buffer_in, uint8_t* buffer_out,
@@ -256,15 +252,6 @@ __global__ void compute_erosion(uint8_t* buffer_in, uint8_t* buffer_out,
     }
 
     buffer_out[y * pitch_out + x] = min;
-}
-
-uint8_t max(std::uint8_t *array, int length) {
-    uint8_t max = 0;
-    for (int i = 0; i < length; i++) {
-        if (array[i] > max)
-            max = array[i];
-    }
-    return max;
 }
 
 __global__ void binarize(uint8_t* image, int width, int height, uint8_t threshold, size_t pitch) {
@@ -426,15 +413,6 @@ int main(int argc, char **argv) {
         std::cerr << "Computation Error";
 
     // Thresholding
-    /*uint8_t* image_host = (uint8_t*) malloc(patch_height * patch_width * sizeof(uint8_t));
-
-    rc = cudaMemcpy2D(image_host, patch_width * sizeof(uint8_t), buffer1, buffer1_pitch, patch_width * sizeof(uint8_t), patch_height, cudaMemcpyDeviceToHost);
-    if (rc)
-        std::cerr << cudaGetErrorString(rc) << std::endl;
-
-    std::uint8_t threshold = max(image_host, patch_height * patch_width) / 2;
-    free(image_host);*/
-    
     binarize<<<dimGrid, dimBlock>>>(buffer1, patch_width, patch_height, threshold, buffer1_pitch);
     if (cudaPeekAtLastError())
         std::cerr << "Computation Error";
