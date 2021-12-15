@@ -13,7 +13,7 @@ set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3")
 #target_sources(kernels PRIVATE src/kernels.cu)
 #set_target_properties(kernels PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 
-add_executable(cpu src/cpu.cpp)
+add_executable(cpu src/cpu.cpp src/error.cpp)
 target_compile_features(cpu PUBLIC cxx_std_17)
 target_link_libraries(cpu PRIVATE PNG::PNG)
 
