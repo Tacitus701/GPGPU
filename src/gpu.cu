@@ -3,6 +3,7 @@
 #include <iostream>
 #include <algorithm>
 #include <png.h>
+#include <chrono>
 
 __managed__ unsigned int threshold_uint;
 
@@ -317,6 +318,8 @@ __global__ void upscale(uint8_t* patches, uint8_t* output, int width, int height
 }
 
 int main(int argc, char **argv) {
+    
+    std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
 
     // Read Image
     int width, height;
@@ -479,4 +482,10 @@ int main(int argc, char **argv) {
     if (rc)
         std::cerr << cudaGetErrorString(rc) << std::endl;
     free(result_image);
+
+    std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
+    std::cout << "Time elapsed : " << std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin).count();
+    std::cout << " nanoseconds" << std::endl;
+    std::cout << "Time elapsed : " << std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count();
+    std::cout << " microseconds" << std::endl;
 }
