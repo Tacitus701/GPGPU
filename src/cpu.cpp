@@ -1,6 +1,8 @@
 #include <png.h>
 #include <cstddef>
 #include <string>
+#include <chrono>
+#include <iostream>
 
 int width, height;
 png_bytep *row_pointers = NULL;
@@ -388,12 +390,19 @@ void detect_barcode(const char* filename) {
 }
 
 int main(int argc, char **argv) {
+    std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
     if (argc < 2) {
         printf("Missing input img\n");
         return 1;
     }
     const char *filename = argv[1];
     detect_barcode(filename);
+    std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
+    std::cout << "Time elapsed : " << std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin).count();
+    std::cout << " nanoseconds" << std::endl;
+    std::cout << "Time elapsed : " << std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count();
+    std::cout << " microseconds" << std::endl;
+
     return 0;
 }
 
