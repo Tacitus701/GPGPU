@@ -368,7 +368,7 @@ void connect_component(std::uint8_t *response) {
     }
 }
 
-void detect_barcode(const char* filename) {
+void detect_barcode(const char* filename, const char *truth) {
     read_png(filename);
 
     int patch_height = height / patch_size;
@@ -396,9 +396,9 @@ void detect_barcode(const char* filename) {
     connect_component(response);
     patch_to_img(response, "cc.png");
 
-    if (argc > 2) {
+    if (truth != NULL) {
         std::uint8_t *realsize_img = patch_to_img(response, "", false);
-        read_png(argv[2]);
+        read_png(truth);
         std::uint8_t *gt = img_to_grayscale(row_pointers);
         std::uint8_t *error = compute_error(realsize_img, gt, height, width);
 
@@ -422,7 +422,12 @@ int main(int argc, char **argv) {
         return 1;
     }
     const char *filename = argv[1];
-    detect_barcode(filename);
+    if (argc == 2) {
+        detect_barcode(filename, NULL);
+    } else {
+        const char *truth = argv[2];
+        detect_barcode(filename, truth);
+    }
     std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
     std::cout << "Time elapsed : " << std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin).count();
     std::cout << " nanoseconds" << std::endl;
